@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "llm-ledger-client"
+version = "0.1.0"
+description = "Thin client for django-llm-ledger: a litellm cost-tracking callback, an agent-session-transcript ingester (Pi/Claude Code/etc.), and a resilient local fallback queue for when the ledger service is unreachable."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+dependencies = [
+    "requests>=2.28",
+]
+
+[project.optional-dependencies]
+litellm = ["litellm>=1.40"]
+dev = ["pytest>=8"]
+
+[tool.setuptools.packages.find]
+include = ["llm_ledger_client*"]
