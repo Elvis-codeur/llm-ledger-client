@@ -145,3 +145,63 @@ def test_a_real_http_error_is_raised_not_swallowed(analysis, monkeypatch):
     monkeypatch.setattr(requests, "get", fake_get)
     with pytest.raises(requests.HTTPError):
         analysis.cost_summary({"project": "x"})
+
+
+def test_log_manual_expense_resolves_tag_pairs_and_posts_source_manual(analysis, monkeypatch):
+    posted = []
+
+    def fake_post(url, json, timeout):
+        posted.append((url, json))
+        if url.endswith("/tags/"):
+            return _FakeResponse({"id": 7, "key": json["key"], "value": json["value"]})
+        return _FakeResponse({"id": 99, "source": json["source"]})
+
+    monkeypatch.setattr(requests, "post", fake_post)
+    result = analysis.log_manual_expense("5.00", "topped up a library license", tags={"project": "infra"})
+    assert posted[0][0] == "http://fake-ledger/api/tags/"
+    assert posted[1][1]["source"] == "manual"
+    assert posted[1][1]["tags"] == [7]
+    assert result["id"] == 99
+
+
+def test_get_or_create_provider_posts_name_and_extra_fields(analysis, monkeypatch):
+    sent = {}
+
+    def fake_post(url, json, timeout):
+        sent["url"], sent["json"] = url, json
+        return _FakeResponse({"id": 1, "name": json["name"]})
+
+    monkeypatch.setattr(requests, "post", fake_post)
+    analysis.get_or_create_provider("deepseek", display_name="DeepSeek")
+    assert sent["url"] == "http://fake-ledger/api/providers/"
+    assert sent["json"] == {"name": "deepseek", "display_name": "DeepSeek"}
+
+
+def test_add_provider_pricing_policy_omits_effective_until_when_not_given(analysis, monkeypatch):
+    sent = {}
+
+    def fake_post(url, json, timeout):
+        sent["url"], sent["json"] = url, json
+        return _FakeResponse({"id": 1})
+
+    monkeypatch.setattr(requests, "post", fake_post)
+    analysis.add_provider_pricing_policy(
+        1, offpeak_multiplier="0.5", peak_windows_utc={"weekdays": [0], "hours": [[1, 2]]},
+        effective_from="2026-01-01",
+    )
+    assert sent["url"] == "http://fake-ledger/api/provider-pricing-policies/"
+    assert "effective_until" not in sent["json"]
+    assert sent["json"]["provider"] == 1
+
+
+def test_provider_peak_status_passes_at_when_given(analysis, monkeypatch):
+    sent = {}
+
+    def fake_get(url, params, timeout):
+        sent["url"], sent["params"] = url, params
+        return _FakeResponse({"is_peak": True})
+
+    monkeypatch.setattr(requests, "get", fake_get)
+    analysis.provider_peak_status(1, at="2026-10-13T02:00:00Z")
+    assert sent["url"] == "http://fake-ledger/api/providers/1/peak_status/"
+    assert sent["params"] == {"at": "2026-10-13T02:00:00Z"}

@@ -33,6 +33,43 @@ class LedgerAnalysis:
         resp.raise_for_status()
         return resp.json()
 
+    # -- providers --------------------------------------------------------------------------------
+
+    def get_or_create_provider(self, name: str, **fields: Any) -> dict:
+        """Idempotent server-side by name. `fields` can set display_name/website_url/notes."""
+        return self._post("providers", {"name": name, **fields})
+
+    def add_provider_pricing_policy(
+        self,
+        provider_id: int,
+        *,
+        offpeak_multiplier: str | float,
+        peak_windows_utc: dict,
+        effective_from: str,
+        effective_until: str | None = None,
+        source_url: str = "",
+        verification: str = "unverified",
+        note: str = "",
+    ) -> dict:
+        """Appends a new peak/off-peak policy row for a provider -- NEVER edit an existing policy in
+        place: a provider's schedule changing over time needs a new row with a new effective_from,
+        exactly like a price change, or a past call's cost would retroactively change. Set
+        `effective_until` on the OLD policy yourself (a PATCH to its id) when adding a replacement
+        that starts where it ends."""
+        payload: dict[str, Any] = {
+            "provider": provider_id, "offpeak_multiplier": str(offpeak_multiplier),
+            "peak_windows_utc": peak_windows_utc, "effective_from": effective_from,
+            "source_url": source_url, "verification": verification, "note": note,
+        }
+        if effective_until:
+            payload["effective_until"] = effective_until
+        return self._post("provider-pricing-policies", payload)
+
+    def provider_peak_status(self, provider_id: int, *, at: str | None = None) -> dict:
+        """Is this provider in peak or off-peak pricing at `at` (default: now)? -- independent of any
+        one model."""
+        return self._get(f"providers/{provider_id}/peak_status", {"at": at} if at else None)
+
     # -- tags -----------------------------------------------------------------------------------
 
     def get_or_create_tag(self, key: str, value: str) -> dict:
@@ -72,6 +109,26 @@ class LedgerAnalysis:
         if run is not None:
             payload["run"] = run
         return self._post("expenses", payload)
+
+    def log_manual_expense(
+        self,
+        amount_usd: str | float,
+        description: str,
+        *,
+        category: str = "",
+        occurred_at: str | None = None,
+        tags: dict[str, str] | None = None,
+    ) -> dict:
+        """The "I topped up $5 for a library" / "I bought a one-off tool license" case -- a cost a
+        human noticed and wants recorded, with no importer or API behind it. `source` is always
+        "manual" so these are easy to tell apart from an automated import later; `tags` here takes
+        key/value PAIRS (not tag ids like `create_expense`) and resolves/creates them for you, since a
+        human logging a one-off cost shouldn't have to look up tag ids first."""
+        tag_ids = [self.get_or_create_tag(k, v)["id"] for k, v in (tags or {}).items()]
+        return self.create_expense(
+            "manual", amount_usd, category=category, occurred_at=occurred_at,
+            description=description, tags=tag_ids,
+        )
 
     def add_expense_comment(self, expense_id: int, text: str, *, author: str = "") -> dict:
         return self._post(f"expenses/{expense_id}/comments", {"text": text, "author": author})
