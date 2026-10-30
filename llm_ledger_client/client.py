@@ -125,10 +125,18 @@ class LedgerClient:
         external_id: str = "",
         call_purpose: str = "",
         status: str = "success",
+        usage_extra: dict | None = None,
+        pricing_modifiers: list[str] | None = None,
         **extra: Any,
     ) -> dict | None:
         """Never pass a cost_usd here -- the server computes it. `external_id` makes this call
-        idempotent (unique per run) when ingested from a transcript that might be replayed."""
+        idempotent (unique per run) when ingested from a transcript that might be replayed.
+
+        `usage_extra`: usage beyond the four token counts, as counts -- e.g.
+        {"cache_write_1h_tokens": 20983} (the part of cache_creation_tokens written to the 1-hour
+        cache), {"web_search_requests": 3}. `pricing_modifiers`: request options that change the
+        price, e.g. ["batch"] or ["fast", "geo:us"]. The ledger prices both (django-llm-ledger
+        pricing.price_call) and flags anything it has no price for instead of costing it $0."""
         payload = {
             "run": run_pk, "provider": provider, "model": model, "prompt_tokens": prompt_tokens,
             "completion_tokens": completion_tokens, "cache_read_tokens": cache_read_tokens,
@@ -136,6 +144,10 @@ class LedgerClient:
             "api_equivalent_cost_usd": api_equivalent_cost_usd, "external_id": external_id,
             "call_purpose": call_purpose, "status": status, **extra,
         }
+        if usage_extra:
+            payload["usage_extra"] = usage_extra
+        if pricing_modifiers:
+            payload["pricing_modifiers"] = pricing_modifiers
         fallback.enqueue(self.fallback_path, "call", payload)
         return self._post("calls", payload)
 

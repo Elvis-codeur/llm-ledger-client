@@ -174,3 +174,16 @@ class TestHostedLedgerAuth:
         monkeypatch.setattr(requests, "get", fake_get)
         LedgerAnalysis("https://ledger.example/api", token="llt_xyz").cost_summary({"project": "p"})
         assert seen["headers"] == {"Authorization": "Bearer llt_xyz"}
+
+
+class TestUsageExtra:
+    def test_usage_extra_and_modifiers_are_sent_only_when_given(self, client, monkeypatch):
+        sent = []
+        monkeypatch.setattr(requests, "post", lambda url, json=None, **kw: sent.append(json) or _FakeResponse({"id": 1}))
+        client.log_call(1, provider="anthropic", model="anthropic/claude-sonnet-5", prompt_tokens=10,
+                        cache_creation_tokens=100, usage_extra={"cache_write_1h_tokens": 60, "web_search_requests": 2},
+                        pricing_modifiers=["batch"])
+        client.log_call(1, provider="deepseek", model="deepseek/deepseek-flash", prompt_tokens=10)
+        assert sent[0]["usage_extra"] == {"cache_write_1h_tokens": 60, "web_search_requests": 2}
+        assert sent[0]["pricing_modifiers"] == ["batch"]
+        assert "usage_extra" not in sent[1] and "pricing_modifiers" not in sent[1]
