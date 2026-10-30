@@ -11,25 +11,36 @@ trusted for real financial decisions."""
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
 import requests
 
+from .client import TOKEN_ENV_VAR, URL_ENV_VAR, auth_kwargs
+
 
 class LedgerAnalysis:
-    def __init__(self, base_url: str, *, timeout: float = 10.0):
+    def __init__(self, base_url: str, *, timeout: float = 10.0, token: str | None = None):
         """`base_url` is e.g. "http://127.0.0.1:8090/api" (standalone) or
-        "https://your-host/api/ledger" (embedded mount)."""
+        "https://ledger.prospectb2b.net/api" (hosted, needs `token`, default $LLM_LEDGER_TOKEN)."""
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
+        self.token = token if token is not None else os.environ.get(TOKEN_ENV_VAR) or None
+
+    @classmethod
+    def from_env(cls, **kwargs: Any) -> "LedgerAnalysis":
+        url = os.environ.get(URL_ENV_VAR)
+        if not url:
+            raise RuntimeError(f"${URL_ENV_VAR} is not set")
+        return cls(url, **kwargs)
 
     def _get(self, path: str, params: dict | None = None) -> Any:
-        resp = requests.get(f"{self.base_url}/{path}/", params=params or {}, timeout=self.timeout)
+        resp = requests.get(f"{self.base_url}/{path}/", params=params or {}, timeout=self.timeout, **auth_kwargs(self.token))
         resp.raise_for_status()
         return resp.json()
 
     def _post(self, path: str, payload: dict) -> Any:
-        resp = requests.post(f"{self.base_url}/{path}/", json=payload, timeout=self.timeout)
+        resp = requests.post(f"{self.base_url}/{path}/", json=payload, timeout=self.timeout, **auth_kwargs(self.token))
         resp.raise_for_status()
         return resp.json()
 
@@ -206,7 +217,7 @@ class LedgerAnalysis:
         results: list[dict] = []
         url = f"{self.base_url}/{path}/"
         while url:
-            resp = requests.get(url, params=params if results == [] else None, timeout=self.timeout)
+            resp = requests.get(url, params=params if results == [] else None, timeout=self.timeout, **auth_kwargs(self.token))
             resp.raise_for_status()
             data = resp.json()
             if isinstance(data, list):

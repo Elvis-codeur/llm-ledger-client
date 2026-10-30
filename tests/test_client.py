@@ -121,3 +121,56 @@ class TestFlushFallback:
 
     def test_nothing_queued_is_a_no_op(self, client):
         assert client.flush_fallback() == (0, 0)
+
+
+class TestHostedLedgerAuth:
+    """A hosted ledger (llm-ledger-web) refuses calls without a bearer token."""
+
+    def test_token_is_sent_as_a_bearer_header(self, tmp_path, monkeypatch):
+        seen = {}
+
+        def fake_post(url, json=None, timeout=None, headers=None):
+            seen["headers"] = headers
+            return _FakeResponse({"id": 1})
+
+        monkeypatch.setattr(requests, "post", fake_post)
+        c = LedgerClient("https://ledger.example/api", token="llt_abc", fallback_path=tmp_path / "q.jsonl")
+        c.create_run("r1")
+        assert seen["headers"] == {"Authorization": "Bearer llt_abc"}
+
+    def test_no_token_sends_no_auth_header(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("LLM_LEDGER_TOKEN", raising=False)
+        seen = {}
+
+        def fake_post(url, json=None, timeout=None, headers=None):
+            seen["headers"] = headers
+            return _FakeResponse({"id": 1})
+
+        monkeypatch.setattr(requests, "post", fake_post)
+        LedgerClient("http://127.0.0.1:8090/api", fallback_path=tmp_path / "q.jsonl").create_run("r1")
+        assert seen["headers"] is None
+
+    def test_from_env_reads_url_and_token(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("LLM_LEDGER_URL", "https://ledger.example/api/")
+        monkeypatch.setenv("LLM_LEDGER_TOKEN", "llt_from_env")
+        c = LedgerClient.from_env(fallback_path=tmp_path / "q.jsonl")
+        assert c.base_url == "https://ledger.example/api"
+        assert c.token == "llt_from_env"
+
+    def test_from_env_without_url_is_queue_only(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("LLM_LEDGER_URL", raising=False)
+        c = LedgerClient.from_env(fallback_path=tmp_path / "q.jsonl")
+        assert c.base_url is None
+
+    def test_analysis_sends_the_token_too(self, monkeypatch):
+        from llm_ledger_client import LedgerAnalysis
+
+        seen = {}
+
+        def fake_get(url, params=None, timeout=None, headers=None):
+            seen["headers"] = headers
+            return _FakeResponse({"total_cost_usd": "0"})
+
+        monkeypatch.setattr(requests, "get", fake_get)
+        LedgerAnalysis("https://ledger.example/api", token="llt_xyz").cost_summary({"project": "p"})
+        assert seen["headers"] == {"Authorization": "Bearer llt_xyz"}

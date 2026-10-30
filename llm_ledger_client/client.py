@@ -14,6 +14,7 @@ per run) matters for anything replayed from a transcript ingester."""
 from __future__ import annotations
 
 import logging
+import os
 from datetime import datetime, timezone as dt_timezone
 from pathlib import Path
 from typing import Any
@@ -26,6 +27,16 @@ _logger = logging.getLogger("llm_ledger_client")
 
 DEFAULT_FALLBACK_PATH = Path.home() / ".llm_ledger_client" / "fallback_queue.jsonl"
 
+# A hosted ledger (llm-ledger-web) needs a bearer token; set these once per machine.
+URL_ENV_VAR = "LLM_LEDGER_URL"
+TOKEN_ENV_VAR = "LLM_LEDGER_TOKEN"
+
+
+def auth_kwargs(token: str | None) -> dict:
+    """Extra requests kwargs: a bearer header when there is a token, nothing at all otherwise (so a
+    local, tokenless ledger gets exactly the same requests as before tokens existed)."""
+    return {"headers": {"Authorization": f"Bearer {token}"}} if token else {}
+
 
 class LedgerClient:
     def __init__(
@@ -35,20 +46,31 @@ class LedgerClient:
         project: str = "",
         fallback_path: str | Path = DEFAULT_FALLBACK_PATH,
         timeout: float = 5.0,
+        token: str | None = None,
     ):
         """`base_url` is e.g. "http://localhost:8000/api" for an embedded django-llm-ledger mount, or
         the standalone service's own URL. `base_url=None` means "never attempt the network, queue only"
-        -- useful for an offline dev run where you just want the fallback file populated correctly."""
+        -- useful for an offline dev run where you just want the fallback file populated correctly.
+        `token` (default: $LLM_LEDGER_TOKEN) is sent as a bearer token, for a hosted ledger."""
         self.base_url = base_url.rstrip("/") if base_url else None
         self.project = project
         self.fallback_path = Path(fallback_path)
         self.timeout = timeout
+        self.token = token if token is not None else os.environ.get(TOKEN_ENV_VAR) or None
+
+    @classmethod
+    def from_env(cls, **kwargs: Any) -> "LedgerClient":
+        """Reads $LLM_LEDGER_URL and $LLM_LEDGER_TOKEN, so a script runs unchanged on any machine
+        that has them set. No URL set means queue-only (nothing is lost; flush later)."""
+        return cls(os.environ.get(URL_ENV_VAR) or None, **kwargs)
 
     def _post(self, path: str, payload: dict) -> dict | None:
         if self.base_url is None:
             return None
         try:
-            resp = requests.post(f"{self.base_url}/{path}/", json=payload, timeout=self.timeout)
+            resp = requests.post(
+                f"{self.base_url}/{path}/", json=payload, timeout=self.timeout, **auth_kwargs(self.token)
+            )
             resp.raise_for_status()
             return resp.json()
         except requests.RequestException as exc:
@@ -80,6 +102,7 @@ class LedgerClient:
                 f"{self.base_url}/runs/{run_pk}/",
                 json={"status": status, "completed_at": datetime.now(dt_timezone.utc).isoformat(), "result_summary": result_summary or {}},
                 timeout=self.timeout,
+                **auth_kwargs(self.token),
             )
             resp.raise_for_status()
             return resp.json()

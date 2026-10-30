@@ -30,6 +30,26 @@ client.complete_run(run["id"], status="success")
 client.flush_fallback()  # resend anything that failed live, clear the queue once confirmed
 ```
 
+## Hosted ledger (token auth)
+
+A ledger hosted behind a login (llm-ledger-web) needs a per-machine API token, created on its
+API tokens page. Set once per machine:
+
+```bash
+export LLM_LEDGER_URL=https://ledger.prospectb2b.net/api
+export LLM_LEDGER_TOKEN=llt_...
+```
+
+then build clients from the environment, so the same script works on any machine:
+
+```python
+client = LedgerClient.from_env(project="general-scraper")
+analysis = LedgerAnalysis.from_env()
+```
+
+`token=` can also be passed directly. With no token, no `Authorization` header is sent, so a
+local tokenless ledger behaves exactly as before.
+
 ## litellm integration
 
 ```python
